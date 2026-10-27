@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::{
     net::TcpSocket,
     process::Command,
-    sync::{Mutex, Notify},
+    sync::{Mutex, RwLock, watch},
     time::{sleep, timeout},
 };
 
@@ -16,27 +16,25 @@ pub enum BackendState {
 
 pub struct Backend {
     pub config: Config,
-    state: Mutex<BackendState>,
+    state: RwLock<BackendState>,
     startup_lock: Mutex<()>,
-    changed: Notify,
 }
 
 impl Backend {
     pub fn new(config: Config, online: bool) -> Self {
         Self {
             config,
-            state: Mutex::new(if online {
+            state: RwLock::new(if online {
                 BackendState::Online
             } else {
                 BackendState::Offline
             }),
             startup_lock: Mutex::new(()),
-            changed: Notify::new(),
         }
     }
 
     pub async fn state(&self) -> BackendState {
-        *self.state.lock().await
+        *self.state.read().await
     }
 
     pub async fn probe(&self) -> bool {
@@ -64,27 +62,30 @@ impl Backend {
         if self.state().await != BackendState::Offline {
             return;
         }
-        *self.state.lock().await = BackendState::Starting;
-        self.changed.notify_waiters();
+        *self.state.write().await = BackendState::Starting;
         if !self.start_backend().await {
-            *self.state.lock().await = BackendState::Offline;
-            self.changed.notify_waiters();
+            *self.state.write().await = BackendState::Offline;
         }
     }
 
     pub async fn mark_offline(&self) {
-        *self.state.lock().await = BackendState::Offline;
-        self.changed.notify_waiters();
+        *self.state.write().await = BackendState::Offline;
     }
 
     pub async fn mark_online(&self) {
-        *self.state.lock().await = BackendState::Online;
-        self.changed.notify_waiters();
+        *self.state.write().await = BackendState::Online;
     }
 
-    pub async fn monitor(&self) {
+    pub async fn monitor(&self, mut shutdown: watch::Receiver<bool>) {
         loop {
-            sleep(Duration::from_millis(self.config.backend.probe_interval_ms)).await;
+            tokio::select! {
+                _ = sleep(Duration::from_millis(self.config.backend.probe_interval_ms)) => {}
+                result = shutdown.changed() => {
+                    if result.is_err() || *shutdown.borrow() {
+                        return;
+                    }
+                }
+            }
             if self.state().await == BackendState::Online && !self.probe().await {
                 eprintln!("backend probe failed, marking it offline");
                 self.mark_offline().await;
