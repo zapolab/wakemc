@@ -24,14 +24,9 @@ pub async fn run() -> Result<(), ProxyError> {
     let listener = TcpListener::bind(&config.listen).await?;
     println!("wakemc listening on {}", config.listen);
 
-    let backend = Arc::new(Backend::new(config.clone(), false));
-    if backend.probe().await {
-        backend.mark_online().await;
-    }
-    let (shutdown, shutdown_receiver) = watch::channel(false);
+    let backend = Arc::new(Backend::new(config));
+    let (shutdown, _) = watch::channel(false);
     let mut tasks = JoinSet::new();
-    let monitor_backend = Arc::clone(&backend);
-    tasks.spawn(async move { monitor_backend.monitor(shutdown_receiver).await });
     let shutdown_signal = wait_for_shutdown();
     tokio::pin!(shutdown_signal);
     loop {

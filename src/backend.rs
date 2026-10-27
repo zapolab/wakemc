@@ -1,9 +1,12 @@
 use crate::config::Config;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::{
     net::TcpSocket,
     process::Command,
-    sync::{Mutex, RwLock, watch},
+    sync::{Mutex, RwLock},
     time::{sleep, timeout},
 };
 
@@ -18,18 +21,16 @@ pub struct Backend {
     pub config: Config,
     state: RwLock<BackendState>,
     startup_lock: Mutex<()>,
+    probe_cache: Mutex<Option<(Instant, bool)>>,
 }
 
 impl Backend {
-    pub fn new(config: Config, online: bool) -> Self {
+    pub fn new(config: Config) -> Self {
         Self {
             config,
-            state: RwLock::new(if online {
-                BackendState::Online
-            } else {
-                BackendState::Offline
-            }),
+            state: RwLock::new(BackendState::Offline),
             startup_lock: Mutex::new(()),
+            probe_cache: Mutex::new(None),
         }
     }
 
@@ -38,7 +39,13 @@ impl Backend {
     }
 
     pub async fn probe(&self) -> bool {
-        timeout(
+        let cache_duration = Duration::from_millis(self.config.backend.probe_interval_ms);
+        if let Some((checked_at, result)) = *self.probe_cache.lock().await
+            && checked_at.elapsed() < cache_duration
+        {
+            return result;
+        }
+        let result = timeout(
             Duration::from_millis(self.config.backend.probe_interval_ms),
             async {
                 let mut addresses = tokio::net::lookup_host(self.config.backend.address())
@@ -54,7 +61,9 @@ impl Backend {
             },
         )
         .await
-        .is_ok_and(|result| result.is_some())
+        .is_ok_and(|result| result.is_some());
+        *self.probe_cache.lock().await = Some((Instant::now(), result));
+        result
     }
 
     pub async fn ensure_starting(self: &Arc<Self>) {
@@ -70,27 +79,11 @@ impl Backend {
 
     pub async fn mark_offline(&self) {
         *self.state.write().await = BackendState::Offline;
+        *self.probe_cache.lock().await = None;
     }
 
     pub async fn mark_online(&self) {
         *self.state.write().await = BackendState::Online;
-    }
-
-    pub async fn monitor(&self, mut shutdown: watch::Receiver<bool>) {
-        loop {
-            tokio::select! {
-                _ = sleep(Duration::from_millis(self.config.backend.probe_interval_ms)) => {}
-                result = shutdown.changed() => {
-                    if result.is_err() || *shutdown.borrow() {
-                        return;
-                    }
-                }
-            }
-            if self.state().await == BackendState::Online && !self.probe().await {
-                eprintln!("backend probe failed, marking it offline");
-                self.mark_offline().await;
-            }
-        }
     }
 
     async fn start_backend(&self) -> bool {
