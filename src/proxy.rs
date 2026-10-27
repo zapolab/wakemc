@@ -9,13 +9,30 @@ use std::{io, sync::Arc};
 use tokio::{
     io::{AsyncWriteExt, copy_bidirectional},
     net::TcpStream,
+    sync::watch,
 };
 
 pub async fn handle_connection(
     mut client: TcpStream,
     backend: Arc<Backend>,
+    mut shutdown: watch::Receiver<bool>,
 ) -> Result<(), ProxyError> {
-    let handshake = read_frame(&mut client).await?;
+    tokio::select! {
+        result = handle_connection_inner(&mut client, Arc::clone(&backend)) => result,
+        _ = shutdown.changed() => {
+            client
+                .write_all(&disconnect_packet(&backend.config.messages.lost_connection))
+                .await?;
+            Ok(())
+        }
+    }
+}
+
+async fn handle_connection_inner(
+    client: &mut TcpStream,
+    backend: Arc<Backend>,
+) -> Result<(), ProxyError> {
+    let handshake = read_frame(client).await?;
     let (packet_id, payload) = split_packet(&handshake)?;
     if packet_id != 0 {
         return Err(ProxyError::Protocol("expected handshake packet".into()));
@@ -34,7 +51,9 @@ pub async fn handle_connection(
         match TcpStream::connect(backend.config.backend.address()).await {
             Ok(mut upstream) => {
                 upstream.write_all(&handshake).await?;
-                return forward(client, upstream).await.map_err(ProxyError::from);
+                return forward(client, &mut upstream)
+                    .await
+                    .map_err(ProxyError::from);
             }
             Err(error) => {
                 eprintln!("backend connection failed, marking it offline: {error}");
@@ -45,7 +64,7 @@ pub async fn handle_connection(
     }
     match next_state {
         1 => {
-            let request = read_frame(&mut client).await?;
+            let request = read_frame(client).await?;
             let (request_id, _) = split_packet(&request)?;
             if request_id == 0 {
                 if state == BackendState::Offline && backend.probe().await {
@@ -54,7 +73,9 @@ pub async fn handle_connection(
                         Ok(mut upstream) => {
                             upstream.write_all(&handshake).await?;
                             upstream.write_all(&request).await?;
-                            return forward(client, upstream).await.map_err(ProxyError::from);
+                            return forward(client, &mut upstream)
+                                .await
+                                .map_err(ProxyError::from);
                         }
                         Err(error) => {
                             eprintln!(
@@ -69,7 +90,7 @@ pub async fn handle_connection(
                     _ => &backend.config.messages.offline_motd,
                 };
                 client.write_all(&status_response(motd)).await?;
-                if let Ok(ping) = read_frame(&mut client).await {
+                if let Ok(ping) = read_frame(client).await {
                     let (ping_id, payload) = split_packet(&ping)?;
                     if ping_id == 1 {
                         client.write_all(&pong_response(payload)).await?;
@@ -78,7 +99,7 @@ pub async fn handle_connection(
             }
         }
         2 => {
-            read_frame(&mut client).await?;
+            read_frame(client).await?;
             if state == BackendState::Offline {
                 let backend = Arc::clone(&backend);
                 tokio::spawn(async move {
@@ -94,7 +115,7 @@ pub async fn handle_connection(
     Ok(())
 }
 
-async fn forward(mut client: TcpStream, mut upstream: TcpStream) -> io::Result<()> {
-    copy_bidirectional(&mut client, &mut upstream).await?;
+async fn forward(client: &mut TcpStream, upstream: &mut TcpStream) -> io::Result<()> {
+    copy_bidirectional(client, upstream).await?;
     Ok(())
 }

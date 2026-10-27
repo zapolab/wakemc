@@ -39,6 +39,8 @@ pub struct MessagesConfig {
     pub starting_motd: String,
     #[serde(default = "default_kick")]
     pub kick: String,
+    #[serde(default = "default_lost_connection")]
+    pub lost_connection: String,
 }
 
 impl Config {
@@ -87,4 +89,7 @@ fn default_starting_motd() -> String {
 }
 fn default_kick() -> String {
     "§2Server is starting, please reconnect shortly".into()
+}
+fn default_lost_connection() -> String {
+    "wakemc stopped".into()
 }
