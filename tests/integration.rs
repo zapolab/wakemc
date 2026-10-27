@@ -26,7 +26,9 @@ fn varint_round_trip() {
 
 #[test]
 fn status_packet_contains_motd() {
-    assert!(String::from_utf8_lossy(&status_response("hello")).contains("hello"));
+    assert!(String::from_utf8_lossy(&status_response("hello").unwrap()).contains("hello"));
+    let escaped = status_response("line\r\n\"quoted\"").unwrap();
+    assert!(String::from_utf8_lossy(&escaped).contains(r#"line\r\n\"quoted\""#));
 }
 
 #[test]
