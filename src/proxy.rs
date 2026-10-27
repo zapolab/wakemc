@@ -19,12 +19,7 @@ pub async fn handle_connection(
 ) -> Result<(), ProxyError> {
     tokio::select! {
         result = handle_connection_inner(&mut client, Arc::clone(&backend)) => result,
-        _ = shutdown.changed() => {
-            client
-                .write_all(&disconnect_packet(&backend.config.messages.lost_connection))
-                .await?;
-            Ok(())
-        }
+        _ = shutdown.changed() => Ok(()),
     }
 }
 
