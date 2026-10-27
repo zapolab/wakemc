@@ -3,24 +3,34 @@
 Simple Minecraft Java Edition TCP proxy that wakes a backend server when a player
 tries to log in.
 
-## Usage
+## Usage with Docker Compose
 
-Copy [`wakemc.toml.example`](./wakemc.toml.example) to `wakemc.toml`, adjust the
-backend and startup command, then run:
+1. Create a working directory and copy the example configuration:
 
 ```sh
-cargo run -- wakemc.toml
+cp wakemc.toml.example wakemc.toml
 ```
 
-The configuration contains:
+Adjust `wakemc.toml` as needed.
 
-- `listen`: proxy address, default `0.0.0.0:25565`;
-- `[backend]`: backend host, port, and TCP probe interval in milliseconds;
-- `[startup]`: bash command and maximum startup time in seconds. On Unix, a
-  timed-out command is run in its own process group and the whole group is
-  terminated and reaped;
-- `[messages]`: offline MOTD, starting MOTD, login kick text, and the message
-  sent when wakemc shuts down (`lost_connection`, default `wakemc stopped`).
+2. Create `docker-compose.yml`:
+
+```yaml
+services:
+  wakemc:
+    image: ghcr.io/zapolab/wakemc:latest
+    container_name: wakemc
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./wakemc.toml:/app/wakemc.toml:ro
+```
+
+The host network mode makes the `listen` address and port from `wakemc.toml`
+available directly on the host. It also lets wakemc reach a backend running on
+the host through the address configured in `[backend]`.
+
+## Description
 
 While the backend is offline, status pings receive `offline_motd`. A status ping
 also performs one readiness probe, allowing an externally started backend to be
@@ -28,3 +38,11 @@ detected without starting the configured command. During startup, status pings
 receive `starting_motd`; a login starts the command once and receives the
 configured kick message. Once the backend accepts TCP connections, subsequent
 status and login traffic is forwarded directly.
+
+## Running locally
+
+For development, wakemc can also be run directly with Cargo:
+
+```sh
+cargo run -- wakemc.toml
+```
