@@ -5,13 +5,7 @@ tries to log in.
 
 ## Usage with Docker Compose
 
-1. Create a working directory and copy the example configuration:
-
-```sh
-cp wakemc.toml.example wakemc.toml
-```
-
-Adjust `wakemc.toml` as needed.
+1. Copy `wakemc.toml.example` into `wakemc.toml` and adjust it as needed;
 
 2. Create `docker-compose.yml`:
 
@@ -28,16 +22,17 @@ services:
 
 The host network mode makes the `listen` address and port from `wakemc.toml`
 available directly on the host. It also lets wakemc reach a backend running on
-the host through the address configured in `[backend]`.
+the host through the address configured in `[backend]`;
 
 ## Description
 
-While the backend is offline, status pings receive `offline_motd`. A status ping
-also performs one readiness probe, allowing an externally started backend to be
-detected without starting the configured command. During startup, status pings
-receive `starting_motd`; a login starts the command once and receives the
-configured kick message. Once the backend accepts TCP connections, subsequent
-status and login traffic is forwarded directly.
+While the backend is offline, status pings receive `offline_motd`.  
+A status ping also performs one readiness probe, allowing an externally started 
+backend to be detected without starting the configured command.  
+During startup, status pings receive `starting_motd`; a login starts the command 
+once and receives the configured kick message.  
+Once the backend accepts TCP connections, subsequent status and login traffic is 
+forwarded directly.
 
 ## Running locally
 
