@@ -32,7 +32,10 @@ backend to be detected without starting the configured command.
 During startup, status pings receive `starting_motd`; a login starts the command 
 once and receives the configured kick message.  
 Once the backend accepts TCP connections, subsequent status and login traffic is 
-forwarded directly.
+forwarded directly.  
+On shutdown, wakemc sends `messages.lost_connection` to active clients, and waits
+up to five seconds for connection tasks to finish before aborting any remaining
+tasks.
 
 ## Running locally
 
