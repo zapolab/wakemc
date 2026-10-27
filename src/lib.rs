@@ -9,7 +9,12 @@ use config::Config;
 use error::ProxyError;
 use proxy::handle_connection;
 use std::sync::Arc;
-use tokio::{net::TcpListener, sync::watch, task::JoinSet};
+use tokio::{
+    net::TcpListener,
+    sync::watch,
+    task::JoinSet,
+    time::{Duration, timeout},
+};
 
 pub async fn run() -> Result<(), ProxyError> {
     let path = std::env::args()
@@ -27,7 +32,7 @@ pub async fn run() -> Result<(), ProxyError> {
     let mut tasks = JoinSet::new();
     let monitor_backend = Arc::clone(&backend);
     tasks.spawn(async move { monitor_backend.monitor(shutdown_receiver).await });
-    let shutdown_signal = tokio::signal::ctrl_c();
+    let shutdown_signal = wait_for_shutdown();
     tokio::pin!(shutdown_signal);
     loop {
         tokio::select! {
@@ -49,10 +54,34 @@ pub async fn run() -> Result<(), ProxyError> {
             }
         }
     }
-    while let Some(result) = tasks.join_next().await {
-        if let Err(error) = result {
-            eprintln!("proxy task failed during shutdown: {error}");
+    let join_result = timeout(Duration::from_secs(5), async {
+        while let Some(result) = tasks.join_next().await {
+            if let Err(error) = result {
+                eprintln!("proxy task failed during shutdown: {error}");
+            }
         }
+    })
+    .await;
+    if join_result.is_err() {
+        eprintln!("shutdown timed out, aborting remaining proxy tasks");
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
     }
     Ok(())
+}
+
+async fn wait_for_shutdown() -> Result<(), std::io::Error> {
+    #[cfg(unix)]
+    {
+        let mut sigterm =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result,
+            _ = sigterm.recv() => Ok(()),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await
+    }
 }
