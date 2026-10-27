@@ -49,7 +49,8 @@ fn config_defaults_are_applied() {
     );
     assert_eq!(
         config.messages.starting_motd,
-        "Server is starting - please reconnect shortly"
+        "§2Server is starting - please reconnect shortly"
     );
+    assert_eq!(config.messages.lost_connection, "wakemc stopped");
     assert_eq!(config.startup.timeout_seconds, 120);
 }
