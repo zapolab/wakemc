@@ -19,7 +19,8 @@ The configuration contains:
 - `[startup]`: bash command and maximum startup time in seconds. On Unix, a
   timed-out command is run in its own process group and the whole group is
   terminated and reaped;
-- `[messages]`: offline MOTD, starting MOTD, and login kick text.
+- `[messages]`: offline MOTD, starting MOTD, login kick text, and the message
+  sent when wakemc shuts down (`lost_connection`, default `wakemc stopped`).
 
 While the backend is offline, status pings receive `offline_motd`. A status ping
 also performs one readiness probe, allowing an externally started backend to be

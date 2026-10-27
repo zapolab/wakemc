@@ -15,3 +15,4 @@ timeout_seconds = 120
 offline_motd = "Server offline - reconnect to wake it"
 starting_motd = "§2Server is starting - please reconnect shortly"
 kick = "§2Server is starting, please reconnect shortly"
+lost_connection = "wakemc stopped"
