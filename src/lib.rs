@@ -84,5 +84,4 @@ async fn wait_for_shutdown() -> Result<(), std::io::Error> {
     {
         tokio::signal::ctrl_c().await
     }
-    Ok(())
 }
