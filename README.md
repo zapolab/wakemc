@@ -8,27 +8,27 @@ tries to log in.
 1. Create a working directory and copy the example configuration:
 
 ```sh
-  cp wakemc.toml.example wakemc.toml
+cp wakemc.toml.example wakemc.toml
 ```
 
-  Adjust `wakemc.toml` as needed.
+Adjust `wakemc.toml` as needed.
 
 2. Create `docker-compose.yml`:
 
 ```yaml
-  services:
-    wakemc:
-      image: ghcr.io/zapolab/wakemc:latest
-      container_name: wakemc
-      network_mode: host
-      restart: unless-stopped
-      volumes:
-        - ./wakemc.toml:/app/wakemc.toml:ro
+services:
+  wakemc:
+    image: ghcr.io/zapolab/wakemc:latest
+    container_name: wakemc
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./wakemc.toml:/app/wakemc.toml:ro
 ```
 
-  The host network mode makes the `listen` address and port from `wakemc.toml`
-  available directly on the host. It also lets wakemc reach a backend running on
-  the host through the address configured in `[backend]`.
+The host network mode makes the `listen` address and port from `wakemc.toml`
+available directly on the host. It also lets wakemc reach a backend running on
+the host through the address configured in `[backend]`.
 
 ## Description
 
