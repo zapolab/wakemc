@@ -1,9 +1,14 @@
 name: Publish Docker Images
 
 on:
+<<<<<<< HEAD
   push:
     tags:
       - "v*.*.*"
+=======
+  release:
+    types: [published]
+>>>>>>> ci-repo/main
 
 jobs:
   build-and-push:
