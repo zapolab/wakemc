@@ -1,18 +1,21 @@
-listen = "0.0.0.0:25565"
+# Optional: address where wakemc listens for Minecraft clients.
+# listen = "0.0.0.0:25565"
 
 [backend]
 host = "127.0.0.1"
 port = 25566
-# Probe interval while waking the backend.
-probe_interval_ms = 5000
+# Optional: milliseconds interval between backend readiness probes.
+# probe_interval_ms = 5000
 
 [startup]
-# The command is run by bash -c when a player attempts to log in.
+# Required: command run by bash -c when a player attempts to log in.
 command = "/opt/minecraft/start.sh"
-timeout_seconds = 120
+# Optional: maximum time, in seconds, to wait for the backend to become ready.
+# timeout_seconds = 120
 
 [messages]
-offline_motd = "Server offline - reconnect to wake it"
-starting_motd = "§2Server is starting - please reconnect shortly"
-kick = "§2Server is starting, please reconnect shortly"
-lost_connection = "wakemc stopped"
+# Optinal: messages.
+# offline_motd = "Server offline - reconnect to wake it"
+# starting_motd = "§2Server is starting - please reconnect shortly"
+# kick = "§2Server is starting, please reconnect shortly"
+# lost_connection = "wakemc stopped"
