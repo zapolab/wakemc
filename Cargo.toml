@@ -1,6 +1,6 @@
 [package]
 name = "wakemc"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [[bin]]
@@ -9,6 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["fs", "macros", "net", "io-util", "process", "signal", "sync", "time", "rt-multi-thread"] }
 toml = "0.8"
