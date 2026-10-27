@@ -84,7 +84,7 @@ async fn handle_connection_inner(
                     BackendState::Starting => &backend.config.messages.starting_motd,
                     _ => &backend.config.messages.offline_motd,
                 };
-                client.write_all(&status_response(motd)).await?;
+                client.write_all(&status_response(motd)?).await?;
                 if let Ok(ping) = read_frame(client).await {
                     let (ping_id, payload) = split_packet(&ping)?;
                     if ping_id == 1 {
@@ -102,7 +102,7 @@ async fn handle_connection_inner(
                 });
             }
             client
-                .write_all(&disconnect_packet(&backend.config.messages.kick))
+                .write_all(&disconnect_packet(&backend.config.messages.kick)?)
                 .await?;
         }
         _ => {}
