@@ -24,6 +24,10 @@ The host network mode makes the `listen` address and port from `wakemc.toml`
 available directly on the host. It also lets wakemc reach a backend running on
 the host through the address configured in `[backend]`;
 
+The runtime image includes `wakeonlan`, `openssh-client`, and `iputils-ping`.
+These tools are available to the configured `startup.command` and can be used
+by its startup script.
+
 ## Description
 
 While the backend is offline, status pings receive `offline_motd`.  

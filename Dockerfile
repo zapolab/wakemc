@@ -14,7 +14,8 @@ RUN cargo build --release
 FROM debian:trixie-slim
 WORKDIR /app
 
-# Install required packages
+# Install tools available to startup.command. These can be used by its
+# startup script for Wake-on-LAN, SSH, or ICMP ping.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wakeonlan \
     openssh-client \
