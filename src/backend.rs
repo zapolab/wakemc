@@ -54,7 +54,10 @@ impl Backend {
         )
         .await
         .is_ok_and(|result| result.is_ok());
-        *self.probe_cache.lock().await = Some((Instant::now(), result));
+        let mut cache = self.probe_cache.lock().await;
+        if self.state().await == BackendState::Offline {
+            *cache = Some((Instant::now(), result));
+        }
         result
     }
 
@@ -70,8 +73,9 @@ impl Backend {
     }
 
     pub async fn mark_offline(&self) {
+        let mut cache = self.probe_cache.lock().await;
         *self.state.write().await = BackendState::Offline;
-        *self.probe_cache.lock().await = None;
+        *cache = None;
     }
 
     pub async fn mark_online(&self) {
