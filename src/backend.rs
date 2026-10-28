@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{
-    net::TcpSocket,
+    net::TcpStream,
     process::Command,
     sync::{Mutex, RwLock},
     time::{sleep, timeout},
@@ -50,21 +50,10 @@ impl Backend {
         }
         let result = timeout(
             Duration::from_millis(self.config.backend.probe_interval_ms),
-            async {
-                let mut addresses = tokio::net::lookup_host(self.config.backend.address())
-                    .await
-                    .ok()?;
-                let address = addresses.next()?;
-                let socket = if address.is_ipv4() {
-                    TcpSocket::new_v4().ok()?
-                } else {
-                    TcpSocket::new_v6().ok()?
-                };
-                socket.connect(address).await.ok()
-            },
+            TcpStream::connect(self.config.backend.address()),
         )
         .await
-        .is_ok_and(|result| result.is_some());
+        .is_ok_and(|result| result.is_ok());
         *self.probe_cache.lock().await = Some((Instant::now(), result));
         result
     }
