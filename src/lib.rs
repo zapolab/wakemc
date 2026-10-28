@@ -115,6 +115,7 @@ async fn supervise_tasks(
                             }
                         }
                         Err(error) => {
+                            task_abort_handles.lock().await.remove(&error.id());
                             eprintln!("proxy task failed: {error}");
                         }
                     }
@@ -131,6 +132,7 @@ async fn supervise_tasks(
                 }
             }
             Err(error) => {
+                task_abort_handles.lock().await.remove(&error.id());
                 eprintln!("proxy task failed during shutdown: {error}");
             }
         }

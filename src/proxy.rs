@@ -144,8 +144,18 @@ async fn connect_and_forward(
 
     let (client_read, client_write) = client.split();
     let (backend_read, backend_write) = upstream.split();
-    let client_to_backend = forward_client_to_backend(client_read, backend_write);
-    let backend_to_client = forward_backend_to_client(backend_read, client_write);
+    let client_to_backend = forward_stream(
+        client_read,
+        backend_write,
+        ForwardError::Client,
+        ForwardError::Backend,
+    );
+    let backend_to_client = forward_stream(
+        backend_read,
+        client_write,
+        ForwardError::Backend,
+        ForwardError::Client,
+    );
     tokio::pin!(client_to_backend);
     tokio::pin!(backend_to_client);
 
@@ -155,44 +165,25 @@ async fn connect_and_forward(
     }
 }
 
-async fn forward_client_to_backend<R, W>(mut reader: R, mut writer: W) -> Result<(), ForwardError>
+async fn forward_stream<R, W>(
+    mut reader: R,
+    mut writer: W,
+    read_error: fn(io::Error) -> ForwardError,
+    write_error: fn(io::Error) -> ForwardError,
+) -> Result<(), ForwardError>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
     let mut buffer = [0; 8192];
     loop {
-        let length = reader
-            .read(&mut buffer)
-            .await
-            .map_err(ForwardError::Client)?;
+        let length = reader.read(&mut buffer).await.map_err(read_error)?;
         if length == 0 {
             return Ok(());
         }
         writer
             .write_all(&buffer[..length])
             .await
-            .map_err(ForwardError::Backend)?;
-    }
-}
-
-async fn forward_backend_to_client<R, W>(mut reader: R, mut writer: W) -> Result<(), ForwardError>
-where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
-{
-    let mut buffer = [0; 8192];
-    loop {
-        let length = reader
-            .read(&mut buffer)
-            .await
-            .map_err(ForwardError::Backend)?;
-        if length == 0 {
-            return Ok(());
-        }
-        writer
-            .write_all(&buffer[..length])
-            .await
-            .map_err(ForwardError::Client)?;
+            .map_err(write_error)?;
     }
 }

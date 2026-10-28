@@ -6,7 +6,7 @@ use std::{
 use tokio::{
     net::TcpStream,
     process::Command,
-    sync::{Mutex, RwLock},
+    sync::{Mutex, Notify, RwLock},
     time::{sleep, timeout},
 };
 
@@ -17,13 +17,19 @@ pub enum BackendState {
     Online,
 }
 
+struct ProbeCache {
+    value: Option<(Instant, bool)>,
+    refreshing: bool,
+    generation: u64,
+}
+
 pub struct Backend {
     pub config: Config,
     backend_address: String,
     state: RwLock<BackendState>,
     startup_lock: Mutex<()>,
-    probe_cache: Mutex<Option<(Instant, bool)>>,
-    probe_refresh_lock: Mutex<()>,
+    probe_cache: Mutex<ProbeCache>,
+    probe_notify: Notify,
 }
 
 impl Backend {
@@ -34,8 +40,12 @@ impl Backend {
             backend_address,
             state: RwLock::new(BackendState::Offline),
             startup_lock: Mutex::new(()),
-            probe_cache: Mutex::new(None),
-            probe_refresh_lock: Mutex::new(()),
+            probe_cache: Mutex::new(ProbeCache {
+                value: None,
+                refreshing: false,
+                generation: 0,
+            }),
+            probe_notify: Notify::new(),
         }
     }
 
@@ -48,27 +58,45 @@ impl Backend {
     }
 
     pub async fn probe(&self) -> bool {
-        let _refresh_guard = self.probe_refresh_lock.lock().await;
         let cache_duration = Duration::from_millis(self.config.backend.probe_interval_ms);
-        {
-            let cache = self.probe_cache.lock().await;
-            if let Some((checked_at, result)) = *cache
-                && checked_at.elapsed() < cache_duration
-            {
-                return result;
-            }
-        }
-        let result = timeout(
-            Duration::from_millis(self.config.backend.probe_interval_ms),
-            TcpStream::connect(self.address()),
-        )
-        .await
-        .is_ok_and(|result| result.is_ok());
-        if self.state().await == BackendState::Offline {
+        loop {
+            let notified = self.probe_notify.notified();
+            let refresh_generation = {
+                let mut cache = self.probe_cache.lock().await;
+                if let Some((checked_at, result)) = cache.value
+                    && checked_at.elapsed() < cache_duration
+                {
+                    return result;
+                }
+                if cache.refreshing {
+                    None
+                } else {
+                    cache.refreshing = true;
+                    Some(cache.generation)
+                }
+            };
+
+            let Some(refresh_generation) = refresh_generation else {
+                notified.await;
+                continue;
+            };
+
+            let result = timeout(
+                Duration::from_millis(self.config.backend.probe_interval_ms),
+                TcpStream::connect(self.address()),
+            )
+            .await
+            .is_ok_and(|result| result.is_ok());
+            let backend_is_offline = self.state().await == BackendState::Offline;
             let mut cache = self.probe_cache.lock().await;
-            *cache = Some((Instant::now(), result));
+            if cache.generation == refresh_generation && backend_is_offline {
+                cache.value = Some((Instant::now(), result));
+            }
+            cache.refreshing = false;
+            drop(cache);
+            self.probe_notify.notify_waiters();
+            return result;
         }
-        result
     }
 
     pub async fn ensure_starting(self: &Arc<Self>) {
@@ -101,7 +129,8 @@ impl Backend {
     pub async fn mark_offline(&self) {
         let mut cache = self.probe_cache.lock().await;
         *self.state.write().await = BackendState::Offline;
-        *cache = None;
+        cache.value = None;
+        cache.generation = cache.generation.wrapping_add(1);
     }
 
     pub async fn mark_online(&self) {

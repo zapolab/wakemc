@@ -1,7 +1,7 @@
 use crate::error::ProxyError;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize)]
 pub struct Config {
     #[serde(default = "default_listen")]
     pub listen: String,
@@ -10,7 +10,7 @@ pub struct Config {
     pub messages: MessagesConfig,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize)]
 pub struct BackendConfig {
     pub host: String,
     pub port: u16,
@@ -24,14 +24,14 @@ impl BackendConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize)]
 pub struct StartupConfig {
     pub command: String,
     #[serde(default = "default_startup_timeout")]
     pub timeout_seconds: u64,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize)]
 pub struct MessagesConfig {
     #[serde(default = "default_offline_motd")]
     pub offline_motd: String,
