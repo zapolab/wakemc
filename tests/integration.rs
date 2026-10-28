@@ -200,6 +200,27 @@ async fn invalid_ping_packet_id_is_rejected() {
 }
 
 #[tokio::test]
+async fn malformed_ping_packet_is_rejected() {
+    let backend = Arc::new(Backend::new(test_config(1)));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (_shutdown_sender, shutdown) = watch::channel(false);
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        handle_connection(stream, backend, shutdown).await
+    });
+
+    let mut client = TcpStream::connect(address).await.unwrap();
+    client.write_all(&handshake_packet(1)).await.unwrap();
+    client.write_all(&status_request()).await.unwrap();
+    read_frame(&mut client).await.unwrap();
+    client.write_all(&[1, 0x80]).await.unwrap();
+
+    let error = server.await.unwrap().unwrap_err();
+    assert!(error.to_string().contains("truncated VarInt"));
+}
+
+#[tokio::test]
 async fn shutdown_signal_closes_active_connection() {
     let config = test_config(25566);
     let backend = Arc::new(Backend::new(config));
@@ -244,6 +265,42 @@ async fn client_disconnect_does_not_mark_backend_offline() {
     assert!(proxy_task.await.unwrap().is_ok());
     assert_eq!(backend.state().await, wakemc::backend::BackendState::Online);
     backend_task.abort();
+}
+
+#[tokio::test]
+async fn backend_disconnect_finishes_forwarding_task() {
+    let backend_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_port = backend_listener.local_addr().unwrap().port();
+    let backend_task = tokio::spawn(async move {
+        let (mut stream, _) = backend_listener.accept().await.unwrap();
+        read_frame(&mut stream).await.unwrap();
+        read_frame(&mut stream).await.unwrap();
+        drop(stream);
+    });
+    let backend = Arc::new(Backend::new(test_config(backend_port)));
+    backend.mark_online().await;
+
+    let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_address = proxy_listener.local_addr().unwrap();
+    let (_shutdown_sender, shutdown) = watch::channel(false);
+    let proxy_backend = Arc::clone(&backend);
+    let proxy_task = tokio::spawn(async move {
+        let (stream, _) = proxy_listener.accept().await.unwrap();
+        handle_connection(stream, proxy_backend, shutdown).await
+    });
+
+    let mut client = TcpStream::connect(proxy_address).await.unwrap();
+    client.write_all(&handshake_packet(2)).await.unwrap();
+    client.write_all(&frame(vec![0])).await.unwrap();
+
+    assert!(
+        timeout(Duration::from_secs(1), proxy_task)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_ok()
+    );
+    backend_task.await.unwrap();
 }
 
 #[tokio::test]
