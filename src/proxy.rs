@@ -57,30 +57,37 @@ async fn handle_connection_inner(
         1 => {
             let request = read_frame(client).await?;
             let (request_id, _) = split_packet(&request)?;
-            if request_id == 0 {
-                if state == BackendState::Offline && backend.probe().await {
-                    backend.mark_online().await;
-                    match connect_and_forward(client, &handshake, Some(&request), &backend).await {
-                        Ok(()) => return Ok(()),
-                        Err(ForwardError::Backend(error)) => {
-                            log_backend_failure(&error);
-                            backend.mark_offline().await;
-                        }
-                        Err(ForwardError::Client(_)) => return Ok(()),
+            if request_id != 0 {
+                return Err(ProxyError::Protocol(
+                    "expected status request packet".into(),
+                ));
+            }
+            if state == BackendState::Offline && backend.probe().await {
+                backend.mark_online().await;
+                match connect_and_forward(client, &handshake, Some(&request), &backend).await {
+                    Ok(()) => return Ok(()),
+                    Err(ForwardError::Backend(error)) => {
+                        log_backend_failure(&error);
+                        backend.mark_offline().await;
                     }
-                }
-                let motd = match backend.state().await {
-                    BackendState::Starting => &backend.config.messages.starting_motd,
-                    _ => &backend.config.messages.offline_motd,
-                };
-                client.write_all(&status_response(motd)?).await?;
-                if let Ok(ping) = read_frame(client).await {
-                    let (ping_id, payload) = split_packet(&ping)?;
-                    if ping_id == 1 {
-                        client.write_all(&pong_response(payload)).await?;
-                    }
+                    Err(ForwardError::Client(_)) => return Ok(()),
                 }
             }
+            let motd = match backend.state().await {
+                BackendState::Starting => &backend.config.messages.starting_motd,
+                _ => &backend.config.messages.offline_motd,
+            };
+            client.write_all(&status_response(motd)?).await?;
+            let ping = match read_frame(client).await {
+                Ok(ping) => ping,
+                Err(error) if error.is_expected_disconnect() => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            let (ping_id, payload) = split_packet(&ping)?;
+            if ping_id != 1 {
+                return Err(ProxyError::Protocol("expected ping packet".into()));
+            }
+            client.write_all(&pong_response(payload)).await?;
         }
         2 => {
             read_frame(client).await?;

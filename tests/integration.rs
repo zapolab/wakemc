@@ -142,6 +142,48 @@ async fn offline_status_flow_returns_status_packet() {
 }
 
 #[tokio::test]
+async fn invalid_status_packet_id_is_rejected() {
+    let backend = Arc::new(Backend::new(test_config(1)));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (_shutdown_sender, shutdown) = watch::channel(false);
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        handle_connection(stream, backend, shutdown).await
+    });
+
+    let mut client = TcpStream::connect(address).await.unwrap();
+    client.write_all(&handshake_packet(1)).await.unwrap();
+    client.write_all(&frame(vec![1])).await.unwrap();
+
+    let error = server.await.unwrap().unwrap_err();
+    assert!(error.to_string().contains("expected status request packet"));
+}
+
+#[tokio::test]
+async fn invalid_ping_packet_id_is_rejected() {
+    let mut config = test_config(1);
+    config.messages.offline_motd = "offline".into();
+    let backend = Arc::new(Backend::new(config));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (_shutdown_sender, shutdown) = watch::channel(false);
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        handle_connection(stream, backend, shutdown).await
+    });
+
+    let mut client = TcpStream::connect(address).await.unwrap();
+    client.write_all(&handshake_packet(1)).await.unwrap();
+    client.write_all(&status_request()).await.unwrap();
+    read_frame(&mut client).await.unwrap();
+    client.write_all(&frame(vec![2])).await.unwrap();
+
+    let error = server.await.unwrap().unwrap_err();
+    assert!(error.to_string().contains("expected ping packet"));
+}
+
+#[tokio::test]
 async fn shutdown_signal_closes_active_connection() {
     let config = test_config(25566);
     let backend = Arc::new(Backend::new(config));
