@@ -19,6 +19,7 @@ pub enum BackendState {
 
 pub struct Backend {
     pub config: Config,
+    backend_address: String,
     state: RwLock<BackendState>,
     startup_lock: Mutex<()>,
     probe_cache: Mutex<Option<(Instant, bool)>>,
@@ -27,13 +28,19 @@ pub struct Backend {
 
 impl Backend {
     pub fn new(config: Config) -> Self {
+        let backend_address = config.backend.address();
         Self {
             config,
+            backend_address,
             state: RwLock::new(BackendState::Offline),
             startup_lock: Mutex::new(()),
             probe_cache: Mutex::new(None),
             probe_refresh_lock: Mutex::new(()),
         }
+    }
+
+    pub fn address(&self) -> &str {
+        &self.backend_address
     }
 
     pub async fn state(&self) -> BackendState {
@@ -50,7 +57,7 @@ impl Backend {
         }
         let result = timeout(
             Duration::from_millis(self.config.backend.probe_interval_ms),
-            TcpStream::connect(self.config.backend.address()),
+            TcpStream::connect(self.address()),
         )
         .await
         .is_ok_and(|result| result.is_ok());

@@ -7,9 +7,9 @@ pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>,
     if !(0..=2 * 1024 * 1024).contains(&length) {
         return Err(ProxyError::Protocol("invalid packet length".into()));
     }
-    let mut body = vec![0; length as usize];
-    reader.read_exact(&mut body).await?;
-    encoded.extend_from_slice(&body);
+    let body_start = encoded.len();
+    encoded.resize(body_start + length as usize, 0);
+    reader.read_exact(&mut encoded[body_start..]).await?;
     Ok(encoded)
 }
 

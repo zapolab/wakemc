@@ -123,7 +123,7 @@ async fn connect_and_forward(
     request: Option<&[u8]>,
     backend: &Backend,
 ) -> Result<(), ForwardError> {
-    let mut upstream = TcpStream::connect(backend.config.backend.address())
+    let mut upstream = TcpStream::connect(backend.address())
         .await
         .map_err(ForwardError::Backend)?;
     upstream
