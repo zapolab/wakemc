@@ -37,7 +37,9 @@ pub async fn run() -> Result<(), ProxyError> {
                 let backend = Arc::clone(&backend);
                 let shutdown = shutdown.subscribe();
                 let task = tokio::spawn(async move {
-                    if let Err(error) = handle_connection(stream, backend, shutdown).await {
+                    if let Err(error) = handle_connection(stream, backend, shutdown).await
+                        && !error.is_expected_disconnect()
+                    {
                         eprintln!("{peer}: {error}");
                     }
                 });

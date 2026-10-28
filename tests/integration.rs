@@ -160,6 +160,93 @@ async fn shutdown_signal_closes_active_connection() {
 }
 
 #[tokio::test]
+async fn client_disconnect_does_not_mark_backend_offline() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_address = listener.local_addr().unwrap();
+    let config: Config = toml::from_str(&format!(
+        r#"
+        [backend]
+        host = "127.0.0.1"
+        port = {}
+        [startup]
+        command = "true"
+        [messages]
+        "#,
+        backend_address.port()
+    ))
+    .unwrap();
+    let backend = Arc::new(Backend::new(config));
+    backend.mark_online().await;
+    let backend_task = tokio::spawn(async move {
+        let (_stream, _) = listener.accept().await.unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    });
+
+    let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_address = proxy_listener.local_addr().unwrap();
+    let (shutdown, _) = watch::channel(false);
+    let proxy_backend = Arc::clone(&backend);
+    let proxy_task = tokio::spawn(async move {
+        let (stream, _) = proxy_listener.accept().await.unwrap();
+        handle_connection(stream, proxy_backend, shutdown.subscribe()).await
+    });
+
+    let mut client = TcpStream::connect(proxy_address).await.unwrap();
+    client.write_all(&handshake_packet(2)).await.unwrap();
+    client.write_all(&frame(vec![0])).await.unwrap();
+    client.shutdown().await.unwrap();
+
+    assert!(proxy_task.await.unwrap().is_ok());
+    assert_eq!(backend.state().await, wakemc::backend::BackendState::Online);
+    backend_task.abort();
+}
+
+#[tokio::test]
+async fn refresh_detects_backend_that_went_offline() {
+    let backend_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_port = backend_listener.local_addr().unwrap().port();
+    drop(backend_listener);
+    let config: Config = toml::from_str(&format!(
+        r#"
+        [backend]
+        host = "127.0.0.1"
+        port = {}
+        probe_interval_ms = 10
+        [startup]
+        command = "true"
+        [messages]
+        offline_motd = "backend-offline"
+        "#,
+        backend_port
+    ))
+    .unwrap();
+    let backend = Arc::new(Backend::new(config));
+    backend.mark_online().await;
+
+    let proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let proxy_address = proxy_listener.local_addr().unwrap();
+    let (shutdown, _) = watch::channel(false);
+    let proxy_backend = Arc::clone(&backend);
+    let proxy_task = tokio::spawn(async move {
+        let (stream, _) = proxy_listener.accept().await.unwrap();
+        handle_connection(stream, proxy_backend, shutdown.subscribe()).await
+    });
+
+    let mut client = TcpStream::connect(proxy_address).await.unwrap();
+    client.write_all(&handshake_packet(1)).await.unwrap();
+    client.write_all(&status_request()).await.unwrap();
+    let response = read_frame(&mut client).await.unwrap();
+
+    assert!(String::from_utf8_lossy(&response).contains("backend-offline"));
+    assert_eq!(
+        backend.state().await,
+        wakemc::backend::BackendState::Offline
+    );
+    let _ = client.shutdown().await;
+    proxy_task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn concurrent_probes_share_one_refresh() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();

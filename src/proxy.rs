@@ -7,7 +7,7 @@ use crate::{
 };
 use std::{io, sync::Arc};
 use tokio::{
-    io::{AsyncWriteExt, copy_bidirectional},
+    io::{AsyncWriteExt, copy},
     net::TcpStream,
     sync::watch,
 };
@@ -45,11 +45,12 @@ async fn handle_connection_inner(
     if state == BackendState::Online {
         match connect_and_forward(client, &handshake, None, &backend).await {
             Ok(()) => return Ok(()),
-            Err(error) => {
-                eprintln!("backend connection failed, marking it offline: {error}");
+            Err(ForwardError::Backend(error)) => {
+                log_backend_failure(&error);
                 backend.mark_offline().await;
                 state = BackendState::Offline;
             }
+            Err(ForwardError::Client) => return Ok(()),
         }
     }
     match next_state {
@@ -61,12 +62,11 @@ async fn handle_connection_inner(
                     backend.mark_online().await;
                     match connect_and_forward(client, &handshake, Some(&request), &backend).await {
                         Ok(()) => return Ok(()),
-                        Err(error) => {
-                            eprintln!(
-                                "backend connection failed after probe, marking it offline: {error}"
-                            );
+                        Err(ForwardError::Backend(error)) => {
+                            log_backend_failure(&error);
                             backend.mark_offline().await;
                         }
+                        Err(ForwardError::Client) => return Ok(()),
                     }
                 }
                 let motd = match backend.state().await {
@@ -99,9 +99,22 @@ async fn handle_connection_inner(
     Ok(())
 }
 
-async fn forward(client: &mut TcpStream, upstream: &mut TcpStream) -> io::Result<()> {
-    copy_bidirectional(client, upstream).await?;
-    Ok(())
+enum ForwardError {
+    Client,
+    Backend(io::Error),
+}
+
+fn log_backend_failure(error: &io::Error) {
+    if !matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::BrokenPipe
+            | io::ErrorKind::NotConnected
+            | io::ErrorKind::UnexpectedEof
+    ) {
+        eprintln!("backend connection failed, marking it offline: {error}");
+    }
 }
 
 async fn connect_and_forward(
@@ -109,11 +122,30 @@ async fn connect_and_forward(
     handshake: &[u8],
     request: Option<&[u8]>,
     backend: &Backend,
-) -> io::Result<()> {
-    let mut upstream = TcpStream::connect(backend.config.backend.address()).await?;
-    upstream.write_all(handshake).await?;
+) -> Result<(), ForwardError> {
+    let mut upstream = TcpStream::connect(backend.config.backend.address())
+        .await
+        .map_err(ForwardError::Backend)?;
+    upstream
+        .write_all(handshake)
+        .await
+        .map_err(ForwardError::Backend)?;
     if let Some(request) = request {
-        upstream.write_all(request).await?;
+        upstream
+            .write_all(request)
+            .await
+            .map_err(ForwardError::Backend)?;
     }
-    forward(client, &mut upstream).await
+
+    let (mut client_read, mut client_write) = client.split();
+    let (mut backend_read, mut backend_write) = upstream.split();
+    let client_to_backend = copy(&mut client_read, &mut backend_write);
+    let backend_to_client = copy(&mut backend_read, &mut client_write);
+    tokio::pin!(client_to_backend);
+    tokio::pin!(backend_to_client);
+
+    tokio::select! {
+        result = &mut client_to_backend => result.map(|_| ()).map_err(ForwardError::Backend),
+        result = &mut backend_to_client => result.map(|_| ()).map_err(|_| ForwardError::Client),
+    }
 }
