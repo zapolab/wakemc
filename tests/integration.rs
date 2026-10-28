@@ -30,6 +30,15 @@ fn varint_round_trip() {
     }
 }
 
+#[test]
+fn negative_varints_use_five_bytes_and_round_trip() {
+    let encoded = [0xff, 0xff, 0xff, 0xff, 0x0f];
+    let mut offset = 0;
+
+    assert_eq!(read_varint(&encoded, &mut offset).unwrap(), -1);
+    assert_eq!(offset, encoded.len());
+}
+
 #[tokio::test]
 async fn async_varint_decoding_matches_buffer_decoding() {
     let encoded = [0xff, 0x01];
