@@ -50,16 +50,19 @@ pub fn split_packet(frame: &[u8]) -> Result<(i32, &[u8]), ProxyError> {
 }
 
 pub fn status_response(motd: &str) -> Result<Vec<u8>, ProxyError> {
-    let json = format!(
-        r#"{{"version":{{"name":"wakemc","protocol":769}},"players":{{"max":0,"online":0,"sample":[]}},"description":{{"text":{}}}}}"#,
-        serde_json::to_string(motd).map_err(|error| ProxyError::Protocol(error.to_string()))?
-    );
-    string_packet(0, &json)
+    let response = serde_json::json!({
+        "version": {"name": "wakemc", "protocol": 769},
+        "players": {"max": 0, "online": 0, "sample": []},
+        "description": {"text": motd},
+    });
+    let json = serde_json::to_string(&response)
+        .map_err(|error| ProxyError::Protocol(error.to_string()))?;
+    Ok(string_packet(0, &json))
 }
 
 pub fn disconnect_packet(message: &str) -> Result<Vec<u8>, ProxyError> {
     let json = text_component(message)?;
-    string_packet(0, &json)
+    Ok(string_packet(0, &json))
 }
 
 pub fn pong_response(payload: &[u8]) -> Vec<u8> {
@@ -99,17 +102,15 @@ fn packet(body: Vec<u8>) -> Vec<u8> {
 }
 
 fn text_component(message: &str) -> Result<String, ProxyError> {
-    Ok(format!(
-        r#"{{"text":{}}}"#,
-        serde_json::to_string(message).map_err(|error| ProxyError::Protocol(error.to_string()))?
-    ))
+    serde_json::to_string(&serde_json::json!({"text": message}))
+        .map_err(|error| ProxyError::Protocol(error.to_string()))
 }
 
-fn string_packet(id: i32, value: &str) -> Result<Vec<u8>, ProxyError> {
+fn string_packet(id: i32, value: &str) -> Vec<u8> {
     let mut body = Vec::new();
     write_varint(id, &mut body);
     write_string(value, &mut body);
-    Ok(packet(body))
+    packet(body)
 }
 
 fn write_string(value: &str, output: &mut Vec<u8>) {
