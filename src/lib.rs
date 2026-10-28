@@ -8,11 +8,11 @@ use backend::Backend;
 use config::Config;
 use error::ProxyError;
 use proxy::handle_connection;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tokio::{
     net::TcpListener,
     sync::{Mutex, mpsc, watch},
-    task::{AbortHandle, JoinHandle, JoinSet},
+    task::{AbortHandle, Id, JoinHandle, JoinSet},
     time::{Duration, timeout},
 };
 
@@ -27,8 +27,11 @@ pub async fn run() -> Result<(), ProxyError> {
     let backend = Arc::new(Backend::new(config));
     let (shutdown, _) = watch::channel(false);
     let (task_sender, task_receiver) = mpsc::unbounded_channel();
-    let task_abort_handles = Arc::new(Mutex::new(Vec::new()));
-    let task_supervisor = tokio::spawn(supervise_tasks(task_receiver));
+    let task_abort_handles = Arc::new(Mutex::new(HashMap::new()));
+    let task_supervisor = tokio::spawn(supervise_tasks(
+        task_receiver,
+        Arc::clone(&task_abort_handles),
+    ));
     let shutdown_signal = wait_for_shutdown();
     tokio::pin!(shutdown_signal);
     let result = loop {
@@ -47,7 +50,10 @@ pub async fn run() -> Result<(), ProxyError> {
                         eprintln!("{peer}: {error}");
                     }
                 });
-                task_abort_handles.lock().await.push(task.abort_handle());
+                task_abort_handles
+                    .lock()
+                    .await
+                    .insert(task.id(), task.abort_handle());
                 if task_sender.send(task).is_err() {
                     break Err(ProxyError::Protocol(
                         "proxy task supervisor stopped unexpectedly".into(),
@@ -71,12 +77,12 @@ pub async fn run() -> Result<(), ProxyError> {
 
 async fn shutdown_tasks(
     mut task_supervisor: JoinHandle<()>,
-    task_abort_handles: Arc<Mutex<Vec<AbortHandle>>>,
+    task_abort_handles: Arc<Mutex<HashMap<Id, AbortHandle>>>,
     wait: Duration,
 ) {
     if timeout(wait, &mut task_supervisor).await.is_err() {
         eprintln!("shutdown timed out, aborting remaining proxy tasks");
-        for task in task_abort_handles.lock().await.iter() {
+        for task in task_abort_handles.lock().await.values() {
             task.abort();
         }
         task_supervisor.abort();
@@ -84,7 +90,10 @@ async fn shutdown_tasks(
     }
 }
 
-async fn supervise_tasks(mut receiver: mpsc::UnboundedReceiver<JoinHandle<()>>) {
+async fn supervise_tasks(
+    mut receiver: mpsc::UnboundedReceiver<JoinHandle<()>>,
+    task_abort_handles: Arc<Mutex<HashMap<Id, AbortHandle>>>,
+) {
     let mut tasks = JoinSet::new();
     loop {
         tokio::select! {
@@ -96,16 +105,34 @@ async fn supervise_tasks(mut receiver: mpsc::UnboundedReceiver<JoinHandle<()>>) 
                     None => break,
                 }
             }
-            result = tasks.join_next(), if !tasks.is_empty() => {
-                if let Some(Err(error)) = result {
-                    eprintln!("proxy task failed: {error}");
+            result = tasks.join_next_with_id(), if !tasks.is_empty() => {
+                if let Some(result) = result {
+                    match result {
+                        Ok((id, task_result)) => {
+                            task_abort_handles.lock().await.remove(&id);
+                            if let Err(error) = task_result {
+                                eprintln!("proxy task failed: {error}");
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!("proxy task failed: {error}");
+                        }
+                    }
                 }
             }
         }
     }
-    while let Some(result) = tasks.join_next().await {
-        if let Err(error) = result {
-            eprintln!("proxy task failed during shutdown: {error}");
+    while let Some(result) = tasks.join_next_with_id().await {
+        match result {
+            Ok((id, task_result)) => {
+                task_abort_handles.lock().await.remove(&id);
+                if let Err(error) = task_result {
+                    eprintln!("proxy task failed during shutdown: {error}");
+                }
+            }
+            Err(error) => {
+                eprintln!("proxy task failed during shutdown: {error}");
+            }
         }
     }
 }
