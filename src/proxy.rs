@@ -1,6 +1,6 @@
 use crate::{
     backend::{Backend, BackendState},
-    error::ProxyError,
+    error::{ForwardError, ProxyError},
     protocol::{
         disconnect_packet, pong_response, read_frame, read_varint, split_packet, status_response,
     },
@@ -97,11 +97,6 @@ async fn handle_connection_inner(
         _ => {}
     }
     Ok(())
-}
-
-enum ForwardError {
-    Client,
-    Backend(io::Error),
 }
 
 fn log_backend_failure(error: &io::Error) {
