@@ -85,10 +85,7 @@ async fn handle_connection_inner(
         2 => {
             read_frame(client).await?;
             if state == BackendState::Offline {
-                let backend = Arc::clone(&backend);
-                tokio::spawn(async move {
-                    backend.ensure_starting().await;
-                });
+                backend.request_starting().await;
             }
             client
                 .write_all(&disconnect_packet(&backend.config.messages.kick)?)

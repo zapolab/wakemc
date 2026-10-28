@@ -70,13 +70,33 @@ impl Backend {
 
     pub async fn ensure_starting(self: &Arc<Self>) {
         let _guard = self.startup_lock.lock().await;
-        if self.state().await != BackendState::Offline {
+        if !self.claim_starting().await {
             return;
         }
-        *self.state.write().await = BackendState::Starting;
         if !self.start_backend().await {
-            *self.state.write().await = BackendState::Offline;
+            self.mark_offline().await;
         }
+    }
+
+    pub async fn request_starting(self: &Arc<Self>) {
+        let _guard = self.startup_lock.lock().await;
+        if !self.claim_starting().await {
+            return;
+        }
+        let backend = Arc::clone(self);
+        tokio::spawn(async move {
+            if !backend.start_backend().await {
+                backend.mark_offline().await;
+            }
+        });
+    }
+
+    async fn claim_starting(&self) -> bool {
+        if self.state().await != BackendState::Offline {
+            return false;
+        }
+        *self.state.write().await = BackendState::Starting;
+        true
     }
 
     pub async fn mark_offline(&self) {

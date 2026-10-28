@@ -264,6 +264,21 @@ async fn startup_timeout_returns_backend_to_offline() {
     );
 }
 
+#[tokio::test]
+async fn login_marks_backend_starting_before_returning() {
+    let mut config = test_config(1);
+    config.backend.probe_interval_ms = 10;
+    config.startup.command = "sleep 0.1".into();
+    config.startup.timeout_seconds = 1;
+    let backend = Arc::new(Backend::new(config));
+
+    backend.request_starting().await;
+    assert_eq!(
+        backend.state().await,
+        wakemc::backend::BackendState::Starting
+    );
+}
+
 fn handshake_packet(next_state: i32) -> Vec<u8> {
     let mut body = vec![0, 0, 1, 0, 0, 0];
     body.push(next_state as u8);
