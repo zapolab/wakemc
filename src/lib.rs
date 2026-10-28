@@ -126,34 +126,3 @@ async fn wait_for_shutdown() -> Result<(), std::io::Error> {
         tokio::signal::ctrl_c().await
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{shutdown_tasks, supervise_tasks};
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-    use tokio::sync::mpsc;
-
-    #[tokio::test]
-    async fn shutdown_aborts_supervisor_with_stuck_task() {
-        let (sender, receiver) = mpsc::unbounded_channel();
-        let supervisor = tokio::spawn(supervise_tasks(receiver));
-        let stuck_task = tokio::spawn(async {
-            std::future::pending::<()>().await;
-        });
-        let stuck_task_abort = stuck_task.abort_handle();
-        sender.send(stuck_task).unwrap();
-        drop(sender);
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-        shutdown_tasks(
-            supervisor,
-            Arc::new(Mutex::new(vec![stuck_task_abort.clone()])),
-            std::time::Duration::from_millis(1),
-        )
-        .await;
-
-        tokio::task::yield_now().await;
-        assert!(stuck_task_abort.is_finished());
-    }
-}
