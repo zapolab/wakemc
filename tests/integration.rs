@@ -375,6 +375,19 @@ async fn concurrent_probes_share_one_refresh() {
 }
 
 #[tokio::test]
+async fn probe_and_mark_offline_do_not_deadlock() {
+    let mut config = test_config(1);
+    config.backend.probe_interval_ms = 10;
+    let backend = Arc::new(Backend::new(config));
+
+    timeout(Duration::from_secs(1), async {
+        tokio::join!(backend.probe(), backend.mark_offline());
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
 async fn startup_timeout_returns_backend_to_offline() {
     let mut config = test_config(1);
     config.backend.probe_interval_ms = 10;

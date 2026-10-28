@@ -127,8 +127,8 @@ impl Backend {
     }
 
     pub async fn mark_offline(&self) {
-        let mut cache = self.probe_cache.lock().await;
         *self.state.write().await = BackendState::Offline;
+        let mut cache = self.probe_cache.lock().await;
         cache.value = None;
         cache.generation = cache.generation.wrapping_add(1);
     }
