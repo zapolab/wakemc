@@ -98,21 +98,11 @@ fn packet_outputs_have_expected_ids_and_payloads() {
 
 #[tokio::test]
 async fn offline_status_flow_returns_status_packet() {
-    let config: Config = toml::from_str(
-        r#"
-        listen = "127.0.0.1:0"
-        [backend]
-        host = "127.0.0.1"
-        port = 1
-        probe_interval_ms = 10
-        [startup]
-        command = "true"
-        timeout_seconds = 1
-        [messages]
-        offline_motd = "offline-test"
-        "#,
-    )
-    .unwrap();
+    let mut config = test_config(1);
+    config.listen = "127.0.0.1:0".into();
+    config.backend.probe_interval_ms = 10;
+    config.startup.timeout_seconds = 1;
+    config.messages.offline_motd = "offline-test".into();
     let backend = Arc::new(Backend::new(config));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -135,17 +125,7 @@ async fn offline_status_flow_returns_status_packet() {
 
 #[tokio::test]
 async fn shutdown_signal_closes_active_connection() {
-    let config: Config = toml::from_str(
-        r#"
-        [backend]
-        host = "127.0.0.1"
-        port = 25566
-        [startup]
-        command = "true"
-        [messages]
-        "#,
-    )
-    .unwrap();
+    let config = test_config(25566);
     let backend = Arc::new(Backend::new(config));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -163,18 +143,7 @@ async fn shutdown_signal_closes_active_connection() {
 async fn client_disconnect_does_not_mark_backend_offline() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let backend_address = listener.local_addr().unwrap();
-    let config: Config = toml::from_str(&format!(
-        r#"
-        [backend]
-        host = "127.0.0.1"
-        port = {}
-        [startup]
-        command = "true"
-        [messages]
-        "#,
-        backend_address.port()
-    ))
-    .unwrap();
+    let config = test_config(backend_address.port());
     let backend = Arc::new(Backend::new(config));
     backend.mark_online().await;
     let backend_task = tokio::spawn(async move {
@@ -206,20 +175,9 @@ async fn refresh_detects_backend_that_went_offline() {
     let backend_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let backend_port = backend_listener.local_addr().unwrap().port();
     drop(backend_listener);
-    let config: Config = toml::from_str(&format!(
-        r#"
-        [backend]
-        host = "127.0.0.1"
-        port = {}
-        probe_interval_ms = 10
-        [startup]
-        command = "true"
-        [messages]
-        offline_motd = "backend-offline"
-        "#,
-        backend_port
-    ))
-    .unwrap();
+    let mut config = test_config(backend_port);
+    config.backend.probe_interval_ms = 10;
+    config.messages.offline_motd = "backend-offline".into();
     let backend = Arc::new(Backend::new(config));
     backend.mark_online().await;
 
@@ -250,19 +208,8 @@ async fn refresh_detects_backend_that_went_offline() {
 async fn concurrent_probes_share_one_refresh() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let config: Config = toml::from_str(&format!(
-        r#"
-        [backend]
-        host = "127.0.0.1"
-        port = {}
-        probe_interval_ms = 1000
-        [startup]
-        command = "true"
-        [messages]
-        "#,
-        address.port()
-    ))
-    .unwrap();
+    let mut config = test_config(address.port());
+    config.backend.probe_interval_ms = 1000;
     let backend = Arc::new(Backend::new(config));
     let accept = tokio::spawn(async move {
         let mut connections = 0;
@@ -287,19 +234,10 @@ async fn concurrent_probes_share_one_refresh() {
 
 #[tokio::test]
 async fn startup_timeout_returns_backend_to_offline() {
-    let config: Config = toml::from_str(
-        r#"
-        [backend]
-        host = "127.0.0.1"
-        port = 1
-        probe_interval_ms = 10
-        [startup]
-        command = "sleep 5"
-        timeout_seconds = 1
-        [messages]
-        "#,
-    )
-    .unwrap();
+    let mut config = test_config(1);
+    config.backend.probe_interval_ms = 10;
+    config.startup.command = "sleep 5".into();
+    config.startup.timeout_seconds = 1;
     let backend = Arc::new(Backend::new(config));
     backend.ensure_starting().await;
     assert_eq!(
@@ -322,4 +260,18 @@ fn frame(body: Vec<u8>) -> Vec<u8> {
     let mut packet = vec![body.len() as u8];
     packet.extend(body);
     packet
+}
+
+fn test_config(backend_port: u16) -> Config {
+    toml::from_str(&format!(
+        r#"
+        [backend]
+        host = "127.0.0.1"
+        port = {backend_port}
+        [startup]
+        command = "true"
+        [messages]
+        "#
+    ))
+    .unwrap()
 }
