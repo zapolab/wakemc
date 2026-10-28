@@ -3,6 +3,7 @@ use tokio::{
     io::AsyncWriteExt,
     net::{TcpListener, TcpStream},
     sync::watch,
+    time::{Duration, timeout},
 };
 use wakemc::{
     backend::Backend,
@@ -13,22 +14,27 @@ use wakemc::{
 
 #[test]
 fn varint_round_trip() {
-    for value in [0, 1, 127, 128, 255, 2_097_151] {
-        let mut encoded = Vec::new();
-        let mut current = value;
-        loop {
-            let mut byte = (current & 0x7f) as u8;
-            current >>= 7;
-            if current != 0 {
-                byte |= 0x80;
-            }
-            encoded.push(byte);
-            if current == 0 {
-                break;
-            }
-        }
+    for (encoded, value) in [
+        (&[0x00][..], 0),
+        (&[0x01][..], 1),
+        (&[0x7f][..], 127),
+        (&[0x80, 0x01][..], 128),
+        (&[0xff, 0x01][..], 255),
+        (&[0xff, 0xff, 0x7f][..], 2_097_151),
+    ] {
         let mut offset = 0;
-        assert_eq!(read_varint(&encoded, &mut offset).unwrap(), value);
+        assert_eq!(read_varint(encoded, &mut offset).unwrap(), value);
+    }
+}
+
+#[test]
+fn malformed_varints_are_rejected() {
+    for encoded in [
+        &[0x80, 0x80, 0x80, 0x80, 0x10][..],
+        &[0x80, 0x80, 0x80, 0x80, 0x80][..],
+    ] {
+        let mut offset = 0;
+        assert!(read_varint(encoded, &mut offset).is_err());
     }
 }
 
@@ -172,15 +178,47 @@ async fn concurrent_probes_share_one_refresh() {
     .unwrap();
     let backend = Arc::new(Backend::new(config));
     let accept = tokio::spawn(async move {
-        let (_, _) = listener.accept().await.unwrap();
+        let mut connections = 0;
+        while let Ok(Ok((stream, _))) = timeout(Duration::from_millis(100), listener.accept()).await
+        {
+            connections += 1;
+            drop(stream);
+        }
+        connections
     });
     let (first, second) = tokio::join!(backend.probe(), backend.probe());
     assert!(first);
     assert!(second);
-    tokio::time::timeout(std::time::Duration::from_secs(1), accept)
-        .await
-        .unwrap()
-        .unwrap();
+    assert_eq!(
+        timeout(Duration::from_secs(1), accept)
+            .await
+            .unwrap()
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn startup_timeout_returns_backend_to_offline() {
+    let config: Config = toml::from_str(
+        r#"
+        [backend]
+        host = "127.0.0.1"
+        port = 1
+        probe_interval_ms = 10
+        [startup]
+        command = "sleep 5"
+        timeout_seconds = 1
+        [messages]
+        "#,
+    )
+    .unwrap();
+    let backend = Arc::new(Backend::new(config));
+    backend.ensure_starting().await;
+    assert_eq!(
+        backend.state().await,
+        wakemc::backend::BackendState::Offline
+    );
 }
 
 fn handshake_packet(next_state: i32) -> Vec<u8> {
