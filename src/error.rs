@@ -3,7 +3,7 @@ use thiserror::Error;
 
 #[derive(Debug)]
 pub enum ForwardError {
-    Client,
+    Client(io::Error),
     Backend(io::Error),
 }
 

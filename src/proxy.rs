@@ -7,7 +7,7 @@ use crate::{
 };
 use std::{io, sync::Arc};
 use tokio::{
-    io::{AsyncWriteExt, copy},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::TcpStream,
     sync::watch,
 };
@@ -50,7 +50,7 @@ async fn handle_connection_inner(
                 backend.mark_offline().await;
                 state = BackendState::Offline;
             }
-            Err(ForwardError::Client) => return Ok(()),
+            Err(ForwardError::Client(_)) => return Ok(()),
         }
     }
     match next_state {
@@ -66,7 +66,7 @@ async fn handle_connection_inner(
                             log_backend_failure(&error);
                             backend.mark_offline().await;
                         }
-                        Err(ForwardError::Client) => return Ok(()),
+                        Err(ForwardError::Client(_)) => return Ok(()),
                     }
                 }
                 let motd = match backend.state().await {
@@ -132,15 +132,57 @@ async fn connect_and_forward(
             .map_err(ForwardError::Backend)?;
     }
 
-    let (mut client_read, mut client_write) = client.split();
-    let (mut backend_read, mut backend_write) = upstream.split();
-    let client_to_backend = copy(&mut client_read, &mut backend_write);
-    let backend_to_client = copy(&mut backend_read, &mut client_write);
+    let (client_read, client_write) = client.split();
+    let (backend_read, backend_write) = upstream.split();
+    let client_to_backend = forward_client_to_backend(client_read, backend_write);
+    let backend_to_client = forward_backend_to_client(backend_read, client_write);
     tokio::pin!(client_to_backend);
     tokio::pin!(backend_to_client);
 
     tokio::select! {
-        result = &mut client_to_backend => result.map(|_| ()).map_err(ForwardError::Backend),
-        result = &mut backend_to_client => result.map(|_| ()).map_err(|_| ForwardError::Client),
+        result = &mut client_to_backend => result,
+        result = &mut backend_to_client => result,
+    }
+}
+
+async fn forward_client_to_backend<R, W>(mut reader: R, mut writer: W) -> Result<(), ForwardError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut buffer = [0; 8192];
+    loop {
+        let length = reader
+            .read(&mut buffer)
+            .await
+            .map_err(ForwardError::Client)?;
+        if length == 0 {
+            return Ok(());
+        }
+        writer
+            .write_all(&buffer[..length])
+            .await
+            .map_err(ForwardError::Backend)?;
+    }
+}
+
+async fn forward_backend_to_client<R, W>(mut reader: R, mut writer: W) -> Result<(), ForwardError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut buffer = [0; 8192];
+    loop {
+        let length = reader
+            .read(&mut buffer)
+            .await
+            .map_err(ForwardError::Backend)?;
+        if length == 0 {
+            return Ok(());
+        }
+        writer
+            .write_all(&buffer[..length])
+            .await
+            .map_err(ForwardError::Client)?;
     }
 }
