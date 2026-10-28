@@ -43,13 +43,8 @@ async fn handle_connection_inner(
 
     let mut state = backend.state().await;
     if state == BackendState::Online {
-        match TcpStream::connect(backend.config.backend.address()).await {
-            Ok(mut upstream) => {
-                upstream.write_all(&handshake).await?;
-                return forward(client, &mut upstream)
-                    .await
-                    .map_err(ProxyError::from);
-            }
+        match connect_and_forward(client, &handshake, None, &backend).await {
+            Ok(()) => return Ok(()),
             Err(error) => {
                 eprintln!("backend connection failed, marking it offline: {error}");
                 backend.mark_offline().await;
@@ -64,14 +59,8 @@ async fn handle_connection_inner(
             if request_id == 0 {
                 if state == BackendState::Offline && backend.probe().await {
                     backend.mark_online().await;
-                    match TcpStream::connect(backend.config.backend.address()).await {
-                        Ok(mut upstream) => {
-                            upstream.write_all(&handshake).await?;
-                            upstream.write_all(&request).await?;
-                            return forward(client, &mut upstream)
-                                .await
-                                .map_err(ProxyError::from);
-                        }
+                    match connect_and_forward(client, &handshake, Some(&request), &backend).await {
+                        Ok(()) => return Ok(()),
                         Err(error) => {
                             eprintln!(
                                 "backend connection failed after probe, marking it offline: {error}"
@@ -113,4 +102,18 @@ async fn handle_connection_inner(
 async fn forward(client: &mut TcpStream, upstream: &mut TcpStream) -> io::Result<()> {
     copy_bidirectional(client, upstream).await?;
     Ok(())
+}
+
+async fn connect_and_forward(
+    client: &mut TcpStream,
+    handshake: &[u8],
+    request: Option<&[u8]>,
+    backend: &Backend,
+) -> io::Result<()> {
+    let mut upstream = TcpStream::connect(backend.config.backend.address()).await?;
+    upstream.write_all(handshake).await?;
+    if let Some(request) = request {
+        upstream.write_all(request).await?;
+    }
+    forward(client, &mut upstream).await
 }
