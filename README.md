@@ -30,13 +30,13 @@ by its startup script.
 
 ## Description
 
-While the backend is offline, status pings receive `offline_motd`.  
-A status ping also performs one readiness probe, allowing an externally started 
+While the backend is offline, status pings receive `offline_motd`.
+A status ping also performs one readiness probe, allowing an externally started
 backend to be detected without starting the configured command.  
-During startup, status pings receive `starting_motd`; a login starts the command 
-once and receives the configured kick message.  
-Once the backend accepts TCP connections, subsequent status and login traffic is 
-forwarded directly.  
+During startup, status pings receive `starting_motd`; a login starts the command
+once and receives the configured kick message.
+Once the backend accepts TCP connections, subsequent status and login traffic is
+forwarded directly.
 On shutdown, wakemc closes active client connections and waits up to five seconds
 for connection tasks to finish before aborting any remaining tasks.
 
