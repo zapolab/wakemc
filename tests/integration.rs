@@ -8,6 +8,7 @@ use tokio::{
 use wakemc::{
     backend::Backend,
     config::Config,
+    error::ProxyError,
     protocol::{disconnect_packet, read_frame, read_varint, split_packet, status_response},
     proxy::handle_connection,
 };
@@ -68,6 +69,23 @@ fn config_defaults_are_applied() {
         "§2Server is starting - please reconnect shortly"
     );
     assert_eq!(config.startup.timeout_seconds, 120);
+}
+
+#[test]
+fn expected_disconnect_errors_are_identified() {
+    for kind in [
+        std::io::ErrorKind::UnexpectedEof,
+        std::io::ErrorKind::ConnectionReset,
+        std::io::ErrorKind::BrokenPipe,
+        std::io::ErrorKind::NotConnected,
+    ] {
+        assert!(ProxyError::from(std::io::Error::from(kind)).is_expected_disconnect());
+    }
+}
+
+#[test]
+fn protocol_errors_are_not_identified_as_disconnects() {
+    assert!(!ProxyError::Protocol("invalid packet".into()).is_expected_disconnect());
 }
 
 #[tokio::test]
