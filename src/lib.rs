@@ -11,8 +11,8 @@ use proxy::handle_connection;
 use std::sync::Arc;
 use tokio::{
     net::TcpListener,
-    sync::watch,
-    task::JoinSet,
+    sync::{mpsc, watch},
+    task::{JoinHandle, JoinSet},
     time::{Duration, timeout},
 };
 
@@ -26,7 +26,8 @@ pub async fn run() -> Result<(), ProxyError> {
 
     let backend = Arc::new(Backend::new(config));
     let (shutdown, _) = watch::channel(false);
-    let mut tasks = JoinSet::new();
+    let (task_sender, task_receiver) = mpsc::unbounded_channel();
+    let task_supervisor = tokio::spawn(supervise_tasks(task_receiver));
     let shutdown_signal = wait_for_shutdown();
     tokio::pin!(shutdown_signal);
     loop {
@@ -35,11 +36,16 @@ pub async fn run() -> Result<(), ProxyError> {
                 let (stream, peer) = result?;
                 let backend = Arc::clone(&backend);
                 let shutdown = shutdown.subscribe();
-                tasks.spawn(async move {
+                let task = tokio::spawn(async move {
                     if let Err(error) = handle_connection(stream, backend, shutdown).await {
                         eprintln!("{peer}: {error}");
                     }
                 });
+                if task_sender.send(task).is_err() {
+                    return Err(ProxyError::Protocol(
+                        "proxy task supervisor stopped unexpectedly".into(),
+                    ));
+                }
             }
             result = &mut shutdown_signal => {
                 result?;
@@ -49,20 +55,40 @@ pub async fn run() -> Result<(), ProxyError> {
             }
         }
     }
-    let join_result = timeout(Duration::from_secs(5), async {
-        while let Some(result) = tasks.join_next().await {
-            if let Err(error) = result {
-                eprintln!("proxy task failed during shutdown: {error}");
-            }
-        }
-    })
-    .await;
-    if join_result.is_err() {
+    drop(task_sender);
+    if timeout(Duration::from_secs(5), task_supervisor)
+        .await
+        .is_err()
+    {
         eprintln!("shutdown timed out, aborting remaining proxy tasks");
-        tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
     }
     Ok(())
+}
+
+async fn supervise_tasks(mut receiver: mpsc::UnboundedReceiver<JoinHandle<()>>) {
+    let mut tasks = JoinSet::new();
+    loop {
+        tokio::select! {
+            task = receiver.recv() => {
+                match task {
+                    Some(task) => {
+                        tasks.spawn(task);
+                    }
+                    None => break,
+                }
+            }
+            result = tasks.join_next(), if !tasks.is_empty() => {
+                if let Some(Err(error)) = result {
+                    eprintln!("proxy task failed: {error}");
+                }
+            }
+        }
+    }
+    while let Some(result) = tasks.join_next().await {
+        if let Err(error) = result {
+            eprintln!("proxy task failed during shutdown: {error}");
+        }
+    }
 }
 
 async fn wait_for_shutdown() -> Result<(), std::io::Error> {
