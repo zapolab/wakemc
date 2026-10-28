@@ -153,6 +153,36 @@ async fn shutdown_signal_closes_active_connection() {
     assert!(server.await.unwrap().is_ok());
 }
 
+#[tokio::test]
+async fn concurrent_probes_share_one_refresh() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let config: Config = toml::from_str(&format!(
+        r#"
+        [backend]
+        host = "127.0.0.1"
+        port = {}
+        probe_interval_ms = 1000
+        [startup]
+        command = "true"
+        [messages]
+        "#,
+        address.port()
+    ))
+    .unwrap();
+    let backend = Arc::new(Backend::new(config));
+    let accept = tokio::spawn(async move {
+        let (_, _) = listener.accept().await.unwrap();
+    });
+    let (first, second) = tokio::join!(backend.probe(), backend.probe());
+    assert!(first);
+    assert!(second);
+    tokio::time::timeout(std::time::Duration::from_secs(1), accept)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
 fn handshake_packet(next_state: i32) -> Vec<u8> {
     let mut body = vec![0, 0, 1, 0, 0, 0];
     body.push(next_state as u8);
