@@ -21,8 +21,7 @@ pub async fn read_varint_from<R: AsyncRead + Unpin>(
     for index in 0..5 {
         let byte = reader.read_u8().await?;
         encoded.push(byte);
-        value |= ((byte & 0x7f) as i32) << (index * 7);
-        if byte & 0x80 == 0 {
+        if decode_varint_byte(byte, index, &mut value) {
             return Ok(value);
         }
     }
@@ -36,8 +35,7 @@ pub fn read_varint(data: &[u8], offset: &mut usize) -> Result<i32, ProxyError> {
             .get(*offset)
             .ok_or_else(|| ProxyError::Protocol("truncated VarInt".into()))?;
         *offset += 1;
-        value |= ((byte & 0x7f) as i32) << (index * 7);
-        if byte & 0x80 == 0 {
+        if decode_varint_byte(byte, index, &mut value) {
             return Ok(value);
         }
     }
@@ -95,6 +93,11 @@ fn write_varint(mut value: i32, output: &mut Vec<u8>) {
             break;
         }
     }
+}
+
+fn decode_varint_byte(byte: u8, index: usize, value: &mut i32) -> bool {
+    *value |= ((byte & 0x7f) as i32) << (index * 7);
+    byte & 0x80 == 0
 }
 
 fn packet(body: Vec<u8>) -> Vec<u8> {
