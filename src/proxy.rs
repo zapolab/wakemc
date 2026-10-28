@@ -43,15 +43,10 @@ async fn handle_connection_inner(
 
     let mut state = backend.state().await;
     if state == BackendState::Online {
-        match connect_and_forward(client, &handshake, None, &backend).await {
-            Ok(()) => return Ok(()),
-            Err(ForwardError::Backend(error)) => {
-                log_backend_failure(&error);
-                backend.mark_offline().await;
-                state = BackendState::Offline;
-            }
-            Err(ForwardError::Client(_)) => return Ok(()),
+        if forward_or_fallback(client, &handshake, None, &backend).await {
+            return Ok(());
         }
+        state = BackendState::Offline;
     }
     match next_state {
         1 => {
@@ -64,13 +59,8 @@ async fn handle_connection_inner(
             }
             if state == BackendState::Offline && backend.probe().await {
                 backend.mark_online().await;
-                match connect_and_forward(client, &handshake, Some(&request), &backend).await {
-                    Ok(()) => return Ok(()),
-                    Err(ForwardError::Backend(error)) => {
-                        log_backend_failure(&error);
-                        backend.mark_offline().await;
-                    }
-                    Err(ForwardError::Client(_)) => return Ok(()),
+                if forward_or_fallback(client, &handshake, Some(&request), &backend).await {
+                    return Ok(());
                 }
             }
             let motd = match backend.state().await {
@@ -113,6 +103,22 @@ fn log_backend_failure(error: &io::Error) {
             | io::ErrorKind::UnexpectedEof
     ) {
         eprintln!("backend connection failed, marking it offline: {error}");
+    }
+}
+
+async fn forward_or_fallback(
+    client: &mut TcpStream,
+    handshake: &[u8],
+    request: Option<&[u8]>,
+    backend: &Backend,
+) -> bool {
+    match connect_and_forward(client, handshake, request, backend).await {
+        Ok(()) | Err(ForwardError::Client(_)) => true,
+        Err(ForwardError::Backend(error)) => {
+            log_backend_failure(&error);
+            backend.mark_offline().await;
+            false
+        }
     }
 }
 

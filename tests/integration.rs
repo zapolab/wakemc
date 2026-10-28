@@ -380,6 +380,37 @@ async fn startup_timeout_returns_backend_to_offline() {
 }
 
 #[tokio::test]
+async fn backend_process_exit_marks_backend_offline() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_port = listener.local_addr().unwrap().port();
+    let backend_task = tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            drop(stream);
+        }
+    });
+    let mut config = test_config(backend_port);
+    config.startup.command = "true".into();
+    config.backend.probe_interval_ms = 10;
+    config.startup.timeout_seconds = 1;
+    let backend = Arc::new(Backend::new(config));
+
+    backend.ensure_starting().await;
+    assert_eq!(backend.state().await, wakemc::backend::BackendState::Online);
+
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if backend.state().await == wakemc::backend::BackendState::Offline {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    backend_task.abort();
+}
+
+#[tokio::test]
 async fn login_marks_backend_starting_before_returning() {
     let mut config = test_config(1);
     config.backend.probe_interval_ms = 10;

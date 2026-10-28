@@ -50,10 +50,13 @@ impl Backend {
     pub async fn probe(&self) -> bool {
         let _refresh_guard = self.probe_refresh_lock.lock().await;
         let cache_duration = Duration::from_millis(self.config.backend.probe_interval_ms);
-        if let Some((checked_at, result)) = *self.probe_cache.lock().await
-            && checked_at.elapsed() < cache_duration
         {
-            return result;
+            let cache = self.probe_cache.lock().await;
+            if let Some((checked_at, result)) = *cache
+                && checked_at.elapsed() < cache_duration
+            {
+                return result;
+            }
         }
         let result = timeout(
             Duration::from_millis(self.config.backend.probe_interval_ms),
@@ -61,8 +64,8 @@ impl Backend {
         )
         .await
         .is_ok_and(|result| result.is_ok());
-        let mut cache = self.probe_cache.lock().await;
         if self.state().await == BackendState::Offline {
+            let mut cache = self.probe_cache.lock().await;
             *cache = Some((Instant::now(), result));
         }
         result
@@ -73,9 +76,7 @@ impl Backend {
         if !self.claim_starting().await {
             return;
         }
-        if !self.start_backend().await {
-            self.mark_offline().await;
-        }
+        self.start_backend_and_reset().await;
     }
 
     pub async fn request_starting(self: &Arc<Self>) {
@@ -85,9 +86,7 @@ impl Backend {
         }
         let backend = Arc::clone(self);
         tokio::spawn(async move {
-            if !backend.start_backend().await {
-                backend.mark_offline().await;
-            }
+            backend.start_backend_and_reset().await;
         });
     }
 
@@ -109,7 +108,13 @@ impl Backend {
         *self.state.write().await = BackendState::Online;
     }
 
-    async fn start_backend(&self) -> bool {
+    async fn start_backend_and_reset(self: &Arc<Self>) {
+        if !self.start_backend().await {
+            self.mark_offline().await;
+        }
+    }
+
+    async fn start_backend(self: &Arc<Self>) -> bool {
         let mut command = Command::new("bash");
         command.arg("-c").arg(&self.config.startup.command);
         #[cfg(unix)]
@@ -133,8 +138,20 @@ impl Backend {
         loop {
             if self.probe().await {
                 self.mark_online().await;
+                let backend = Arc::clone(self);
                 tokio::spawn(async move {
-                    let _ = child.wait().await;
+                    match child.wait().await {
+                        Ok(status) => {
+                            eprintln!("backend process exited with status {status}");
+                            if backend.state().await == BackendState::Online {
+                                backend.mark_offline().await;
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!("failed to wait for backend process: {error}");
+                            backend.mark_offline().await;
+                        }
+                    }
                 });
                 return true;
             }

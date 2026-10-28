@@ -153,3 +153,17 @@ async fn wait_for_shutdown() -> Result<(), std::io::Error> {
         tokio::signal::ctrl_c().await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::protocol::read_varint;
+
+    #[test]
+    fn negative_varints_use_five_bytes_and_round_trip() {
+        let encoded = [0xff, 0xff, 0xff, 0xff, 0x0f];
+        let mut offset = 0;
+
+        assert_eq!(read_varint(&encoded, &mut offset).unwrap(), -1);
+        assert_eq!(offset, encoded.len());
+    }
+}

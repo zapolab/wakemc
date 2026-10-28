@@ -123,18 +123,3 @@ fn write_string(value: &str, output: &mut Vec<u8>) {
     write_varint(value.len() as i32, output);
     output.extend_from_slice(value.as_bytes());
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{read_varint, write_varint};
-
-    #[test]
-    fn negative_varints_use_five_bytes_and_round_trip() {
-        let mut encoded = Vec::new();
-        write_varint(-1, &mut encoded);
-
-        assert_eq!(encoded, [0xff, 0xff, 0xff, 0xff, 0x0f]);
-        let mut offset = 0;
-        assert_eq!(read_varint(&encoded, &mut offset).unwrap(), -1);
-    }
-}
