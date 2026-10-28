@@ -9,7 +9,9 @@ use wakemc::{
     backend::Backend,
     config::Config,
     error::ProxyError,
-    protocol::{disconnect_packet, read_frame, read_varint, split_packet, status_response},
+    protocol::{
+        disconnect_packet, read_frame, read_varint, read_varint_from, split_packet, status_response,
+    },
     proxy::handle_connection,
 };
 
@@ -26,6 +28,20 @@ fn varint_round_trip() {
         let mut offset = 0;
         assert_eq!(read_varint(encoded, &mut offset).unwrap(), value);
     }
+}
+
+#[tokio::test]
+async fn async_varint_decoding_matches_buffer_decoding() {
+    let encoded = [0xff, 0x01];
+    let (mut writer, mut reader) = tokio::io::duplex(encoded.len());
+    writer.write_all(&encoded).await.unwrap();
+    let mut consumed = Vec::new();
+
+    assert_eq!(
+        read_varint_from(&mut reader, &mut consumed).await.unwrap(),
+        255
+    );
+    assert_eq!(consumed, encoded);
 }
 
 #[test]

@@ -17,29 +17,28 @@ pub async fn read_varint_from<R: AsyncRead + Unpin>(
     reader: &mut R,
     encoded: &mut Vec<u8>,
 ) -> Result<i32, ProxyError> {
-    let mut value = 0;
-    for index in 0..5 {
+    for _ in 0..5 {
         let byte = reader.read_u8().await?;
         encoded.push(byte);
-        if decode_varint_byte(byte, index, &mut value)? {
-            return Ok(value);
+        if byte & 0x80 == 0 {
+            return decode_varint_bytes(encoded);
         }
     }
-    Err(ProxyError::Protocol("invalid VarInt".into()))
+    decode_varint_bytes(encoded)
 }
 
 pub fn read_varint(data: &[u8], offset: &mut usize) -> Result<i32, ProxyError> {
-    let mut value = 0;
-    for index in 0..5 {
+    let start = *offset;
+    for _ in 0..5 {
         let byte = *data
             .get(*offset)
             .ok_or_else(|| ProxyError::Protocol("truncated VarInt".into()))?;
         *offset += 1;
-        if decode_varint_byte(byte, index, &mut value)? {
-            return Ok(value);
+        if byte & 0x80 == 0 {
+            return decode_varint_bytes(&data[start..*offset]);
         }
     }
-    Err(ProxyError::Protocol("invalid VarInt".into()))
+    decode_varint_bytes(&data[start..*offset])
 }
 
 pub fn split_packet(frame: &[u8]) -> Result<(i32, &[u8]), ProxyError> {
@@ -86,12 +85,18 @@ fn write_varint(mut value: i32, output: &mut Vec<u8>) {
     }
 }
 
-fn decode_varint_byte(byte: u8, index: usize, value: &mut i32) -> Result<bool, ProxyError> {
-    if index == 4 && byte & 0x70 != 0 {
-        return Err(ProxyError::Protocol("invalid VarInt".into()));
+fn decode_varint_bytes(data: &[u8]) -> Result<i32, ProxyError> {
+    let mut value = 0;
+    for (index, &byte) in data.iter().enumerate() {
+        if index == 4 && byte & 0x70 != 0 {
+            return Err(ProxyError::Protocol("invalid VarInt".into()));
+        }
+        value |= ((byte & 0x7f) as i32) << (index * 7);
+        if byte & 0x80 == 0 {
+            return Ok(value);
+        }
     }
-    *value |= ((byte & 0x7f) as i32) << (index * 7);
-    Ok(byte & 0x80 == 0)
+    Err(ProxyError::Protocol("invalid VarInt".into()))
 }
 
 fn packet(body: Vec<u8>) -> Vec<u8> {
