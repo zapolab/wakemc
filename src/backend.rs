@@ -22,6 +22,7 @@ pub struct Backend {
     state: RwLock<BackendState>,
     startup_lock: Mutex<()>,
     probe_cache: Mutex<Option<(Instant, bool)>>,
+    probe_refresh_lock: Mutex<()>,
 }
 
 impl Backend {
@@ -31,6 +32,7 @@ impl Backend {
             state: RwLock::new(BackendState::Offline),
             startup_lock: Mutex::new(()),
             probe_cache: Mutex::new(None),
+            probe_refresh_lock: Mutex::new(()),
         }
     }
 
@@ -39,6 +41,7 @@ impl Backend {
     }
 
     pub async fn probe(&self) -> bool {
+        let _refresh_guard = self.probe_refresh_lock.lock().await;
         let cache_duration = Duration::from_millis(self.config.backend.probe_interval_ms);
         if let Some((checked_at, result)) = *self.probe_cache.lock().await
             && checked_at.elapsed() < cache_duration
