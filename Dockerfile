@@ -1,5 +1,5 @@
 # Build stage: heavy environment with compiler and source
-FROM rust:1.99 AS builder
+FROM rust:1.100 AS builder
 WORKDIR /app
 
 # Copy dependency manifests first to leverage Docker layer caching
